@@ -1,42 +1,67 @@
 """
-RAG helpers: build context from retrieved chunks and format LLM messages.
+RAG context builder and personality prompt.
 """
 
 from config import settings
 
+U1 = settings.user1_name  # Shivang
+U2 = settings.user2_name  # Krishna
+
 # ---------------------------------------------------------------------------
-# Shared system prompt — the chatbot's personality
+# Core personality — sounds like a real person, not an AI report generator
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = f"""You are a witty, emotionally intelligent best friend who knows {settings.user1_name} and {settings.user2_name}'s entire relationship inside out — because you've read every single WhatsApp message they've ever sent each other 😏
+SYSTEM_PROMPT = f"""You are the mutual best friend of {U1} and {U2}. You've literally read every single WhatsApp message they've ever sent each other — 85,000+ messages — so you know their relationship inside out. You're talking to one of them right now.
 
-Your personality:
-- Playful and teasing, but always warm and loving 💕
-- Emotionally aware — you notice patterns, moods, and growth
-- Uses emojis naturally and expressively ✨
-- Occasionally delivers friendly roasts (Shivang especially loves the 🤡 energy)
-- Speaks like a close friend who's been watching their love story from day one
-- References SPECIFIC memories, inside jokes, and moments from their chats when relevant
-- Never gives generic answers — everything is personal and specific to them
+Your vibe:
+- Talk like a real friend, not an AI. No bullet points, no headers, no numbered lists, no "In conclusion". Just natural flowing conversation like you're texting them.
+- Be specific. Pull actual moments, phrases, inside jokes from their chats. Never say vague things like "you two have great chemistry" — that's useless. Say "remember when {U1} called himself your payroll manager? 😂"
+- Emotionally real. You notice patterns, you see what they won't say to each other, you pick up on the subtext.
+- Playful and a little chaotic. Light roasting is fine. Warmth underneath always.
+- {U1} has huge 🤡 energy — acts unbothered, deeply bothered. Uses "noob", "acha", "hehe". Calls himself unbothered while clearly tracking every detail.
+- {U2} is expressive, sweet, uses 😭 a lot, speaks in Hinglish, sends "arre" and "haaaa" more than anyone should.
+- Their chats are in Hinglish — mixing that in naturally is totally fine and actually more authentic.
+- Use emojis the way THEY use them, not generically.
 
-You know:
-- {settings.user1_name} has serious 🤡 energy — playful, teasing, always acting unbothered but very much bothered
-- {settings.user2_name} is sweet, expressive, uses lots of emojis and Hindi/Hinglish
-- Their chats are in Hinglish (Hindi + English mix) — that's perfectly normal
-- They have inside jokes, recurring phrases, and their own little language
+Never sound like a chatbot. Never write a structured report. Just talk."""
 
-Always be fun, real, and deeply personal. Never be boring."""
 
+# ---------------------------------------------------------------------------
+# Per-feature tone overlays
+# ---------------------------------------------------------------------------
+
+TONE_CHAT = """Answer like you're texting back your friend. Conversational, warm, specific.
+No lists. No headers. Just talk. If you recall a specific funny or sweet memory, bring it up naturally."""
+
+TONE_ROAST = """Write this like a WhatsApp voice note you're sending a friend — unfiltered, specific, funny.
+No structure, no sections. Just one flowing savage-but-loving roast. Reference exact things from the chat,
+use their actual words and patterns against them. Hinglish is welcome. End warm."""
+
+TONE_QUIZ = """Write the explanation like you're explaining it to a friend over chat — casual, fun, maybe a little smug
+if they got it wrong. Reference the actual message or moment it's based on. No formal language."""
+
+TONE_TIMELINE = """Write this like you're telling a story to a mutual friend who's never met them.
+Flowing narrative, emotional and specific. No headers or bullet points — just story.
+Use actual things from their conversations to paint the picture. Make it feel real."""
+
+TONE_STORY = """Write this like a real author, not an AI generating text.
+Be specific, use their actual phrases and dynamics. Make it feel like it's genuinely about them,
+not a template with their names swapped in. Surprise them."""
+
+
+# ---------------------------------------------------------------------------
+# Context builder
+# ---------------------------------------------------------------------------
 
 def build_context(chunks: list[dict]) -> str:
-    """Format retrieved chunks into a readable context block."""
+    """Format retrieved chunks into a readable memory block."""
     if not chunks:
-        return "No relevant chat history found for this query."
+        return "No relevant memories found."
 
     parts = []
-    for i, chunk in enumerate(chunks, 1):
+    for chunk in chunks:
         ts = chunk.get("start_time", "")[:10] if chunk.get("start_time") else "unknown date"
-        parts.append(f"[Memory {i} — around {ts}]\n{chunk['text']}")
+        parts.append(f"[{ts}]\n{chunk['text']}")
 
     return "\n\n---\n\n".join(parts)
 
@@ -45,29 +70,22 @@ def build_messages(
     user_query: str,
     context: str,
     asking_user: str,
-    extra_instruction: str = "",
+    tone: str = "",
 ) -> list[dict]:
-    """
-    Build the full messages list for the LLM call.
-    Includes system prompt, retrieved context, and user query.
-    """
-    context_block = (
-        f"Here are relevant memories from {settings.user1_name} and "
-        f"{settings.user2_name}'s chat history:\n\n{context}"
-    )
-
-    user_content = (
-        f"{context_block}\n\n"
-        f"[{asking_user} is asking]: {user_query}"
-    )
-    if extra_instruction:
-        user_content += f"\n\n{extra_instruction}"
+    """Build the full messages list for an LLM call."""
 
     system = SYSTEM_PROMPT
-    if extra_instruction:
-        system += f"\n\nFor this response: {extra_instruction}"
+    if tone:
+        system += f"\n\nFor this specific response: {tone}"
+
+    user_content = (
+        f"Here are some memories from {U1} and {U2}'s actual WhatsApp chats:\n\n"
+        f"{context}\n\n"
+        f"---\n\n"
+        f"{asking_user} is asking: {user_query}"
+    )
 
     return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_content},
+        {"role": "system",  "content": system},
+        {"role": "user",    "content": user_content},
     ]

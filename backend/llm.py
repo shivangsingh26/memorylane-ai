@@ -1,6 +1,7 @@
 """
-OpenAI LLM wrapper using gpt-4.1.
-Supports both full response and SSE streaming.
+OpenAI LLM wrapper (gpt-5.1).
+Supports full response and SSE streaming.
+Temperature is per-call — different features use different values.
 """
 
 from typing import AsyncGenerator
@@ -12,22 +13,22 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
-async def call_llm(messages: list[dict]) -> str:
-    """Return the full response string from GPT-4.1."""
+async def call_llm(messages: list[dict], temperature: float = 0.9) -> str:
+    """Return the full response string."""
     response = await _client().chat.completions.create(
         model=settings.model_name,
         messages=messages,
-        temperature=0.9,
+        temperature=temperature,
     )
     return response.choices[0].message.content
 
 
-async def stream_llm(messages: list[dict]) -> AsyncGenerator[str, None]:
-    """Yield content chunks from a streaming GPT-4.1 call."""
+async def stream_llm(messages: list[dict], temperature: float = 0.85) -> AsyncGenerator[str, None]:
+    """Yield content chunks from a streaming call."""
     stream = await _client().chat.completions.create(
         model=settings.model_name,
         messages=messages,
-        temperature=0.9,
+        temperature=temperature,
         stream=True,
     )
     async for chunk in stream:
