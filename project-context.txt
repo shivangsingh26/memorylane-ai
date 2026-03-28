@@ -1,0 +1,113 @@
+PLAN (Your Version — Not Generic)
+🎯 Goal
+Build a cute, funny, memory-aware couple chatbot using your WhatsApp chats that:
+Remembers your relationship
+Generates insights about you both
+Feels alive + emotionally intelligent
+Has fun/viral features (not just Q&A bot)
+🧠 1. Data Processing (Keep it Simple + Clean)
+Input:
+WhatsApp .txt export
+Steps:
+Parse into:
+{
+  "date": "",
+  "time": "",
+  "sender": "Shivang / Krishna",
+  "message": ""
+}
+Clean:
+Remove:
+system messages
+media placeholders
+Keep emojis (important for personality --> my personality is clown emoji by the way)
+🧠 2. Storage Design (Lean, no overkill)
+Use:
+Chroma (or FAISS local) for embeddings
+JSON / SQLite for structured stats
+Embeddings:
+Model: text-embedding-3-small (cheap + good)
+Chunking:
+5–10 messages per chunk (keep conversational context)
+🧠 3. Core System Architecture
+Flow:
+User → API → Retrieve memory → LLM → Response
+RAG Setup:
+Top K = 5
+Add:
+relevant past chats
+user identity (who is asking)
+🧠 4. Personality Layer (THIS is important)
+Define clearly:
+The bot is a playful, emotionally aware third friend who knows Shivang and Krishna deeply.
+Behavior:
+Light teasing
+Remembers patterns
+Occasionally dramatic
+Uses emojis naturally ❤️😂
+Example tone:
+“You guys literally said ‘miss you’ 27 times last week… clingy much? 😌”
+🔥 5. KILLER FEATURES (Your Differentiator)
+💖 1. Relationship Timeline Generator
+Detect phases:
+first interactions
+peak talking phase
+low phases
+Output like a story
+😂 2. Roast Mode (SAFE)
+Light funny stats:
+reply speed
+common phrases
+habits
+🧠 3. Who Knows Who Better (Quiz Mode)
+Auto-generate questions from chat
+📊 4. Love Analytics Dashboard
+Compute:
+message count per day
+emoji usage
+who initiates more
+response times
+🎭 5. Inside Joke Engine
+Detect repeated phrases
+Reuse them in responses
+✍️ 6. Story / Poem Generator
+“Write a story about us based on our chats”
+🧠 6. Backend Design
+Stack:
+Python (FastAPI) OR Node (Express)
+Chroma DB
+OpenAI / Claude API
+Routes:
+/chat
+/facts
+/quiz
+/timeline
+🧠 7. Frontend (Keep it clean)
+Stack:
+Next.js
+Vercel deployment
+UI:
+Chat interface
+Mode switch:
+Chat
+Roast
+Quiz
+Timeline
+🔐 8. Privacy (important for your use case)
+Store locally or private DB
+No logging of chats externally
+Add “Delete all data” button
+🧠 9. What NOT to do
+❌ No fine-tuning (waste here)
+❌ No Pinecone initially
+❌ No complex LangChain chains
+⚡ Final Architecture (Simple but powerful)
+Frontend (Next.js)
+        ↓
+Backend API
+        ↓
+LLM (Claude / GPT)
+        ↓
+Vector DB (Chroma)
+        +
+Analytics Engine (Python)

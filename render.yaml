@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: couple-chatbot-backend
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: free
+
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false          # You'll paste this in the Render dashboard
+      - key: MODEL_NAME
+        value: gpt-5.1
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: USER1_NAME
+        value: Shivang
+      - key: USER2_NAME
+        value: Krishna

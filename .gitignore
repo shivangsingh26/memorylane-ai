@@ -1,0 +1,33 @@
+# ── Secrets ──────────────────────────────
+.env
+.env.local
+backend/.env
+
+# ── Raw chat file (never commit) ─────────
+_chat.txt
+
+# ── Raw messages JSON (contains full chat) ─
+backend/data/messages.json
+
+# Track these (baked-in data for deployment):
+# backend/data/chroma/   ← vector embeddings
+# backend/data/analytics.json ← aggregated stats
+!backend/data/
+!backend/data/chroma/
+!backend/data/analytics.json
+
+# ── Python ───────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# ── Next.js ──────────────────────────────
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# ── OS ───────────────────────────────────
+.DS_Store
+Thumbs.db
