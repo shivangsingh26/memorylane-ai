@@ -1,28 +1,28 @@
 """
-Quiz mode — multi-query retrieval with a random temporal offset so questions
-are different every single run, not recycled from the same early chunks.
+Quiz mode — multi-query + month spread retrieval for fresh questions every run.
+Returns structured JSON with memory_snippet for post-reveal display.
 """
 
 import json
 import random
 from embeddings import EmbeddingStore
-from rag import SYSTEM_PROMPT, TONE_QUIZ
+from rag import SYSTEM_PROMPT, TONE_QUIZ, _fmt_date
 from llm import call_llm
 from config import settings
 
-
-# Diverse seed queries — each targets a different aspect of the relationship
 QUIZ_SEED_QUERIES = [
-    "funny moment joke teasing",
-    "miss you sad emotional feelings",
+    "funny moment joke teasing laugh",
+    "miss you sad emotional feeling",
     "fight argument sorry upset",
     "late night long conversation",
     "food plans hangout meet",
-    "who texts first good morning",
-    "inside joke repeated phrase",
+    "who texts first morning routine",
+    "inside joke repeated phrase catchphrase",
     "compliment sweet caring moment",
-    "work college study stress",
-    "random wholesome daily life",
+    "work college stress daily life",
+    "random wholesome unexpected moment",
+    "jealous protective concern",
+    "future plans dream together",
 ]
 
 
@@ -34,47 +34,45 @@ async def generate_quiz(analytics: dict, store: EmbeddingStore) -> dict:
     rt   = analytics.get("response_time", {})
     emojis = list(analytics.get("top_emojis", {}).keys())[:3]
 
-    # Pick 5 random seed queries so every quiz run hits different material
-    seeds = random.sample(QUIZ_SEED_QUERIES, 5)
+    # 5 random seeds → different material every run
+    seeds  = random.sample(QUIZ_SEED_QUERIES, 5)
     chunks = store.multi_query(seeds, n_per_query=4)
-
-    # Also sprinkle in some temporally-spread chunks for variety
-    temporal = store.temporal_spread(n_periods=3, per_period=2)
-    all_chunks = chunks + temporal
-
-    # Format context — limit to 12 chunks to keep prompt focused
+    # Add 2-per-month spread for temporal variety
+    spread = store.month_spread(per_month=1)
+    all_chunks = chunks + spread
     random.shuffle(all_chunks)
-    context_chunks = all_chunks[:12]
+    selected = all_chunks[:14]
+
     context = "\n\n---\n\n".join(
-        f"[{c.get('start_time','')[:10]}]\n{c['text']}"
-        for c in context_chunks
+        f"[{_fmt_date(c.get('start_time', ''))}]\n{c['text']}"
+        for c in selected
     )
 
-    user_content = f"""You have memories from {u1} and {u2}'s WhatsApp chats. Generate a relationship quiz.
-
-Actual chat memories (different moments from across their history):
+    user_content = f"""Memories from {u1} and {u2}'s WhatsApp chats (dates shown):
 {context}
 
-Quick stats to use:
-- {u1} sent {mc.get(u1, '?'):,} messages, {u2} sent {mc.get(u2, '?'):,}
-- {u1} started conversations {init.get(u1, '?')} times, {u2} started {init.get(u2, '?')} times
-- Median response time: {rt.get('median_seconds', 0)} seconds
-- Top emojis: {' '.join(emojis) if emojis else 'unknown'}
+Stats:
+- {u1}: {mc.get(u1, 0):,} messages, started {init.get(u1, 0)} conversations
+- {u2}: {mc.get(u2, 0):,} messages, started {init.get(u2, 0)} conversations
+- Median response time: {rt.get('median_seconds', 0)}s
+- Top emojis: {' '.join(emojis)}
 
-Generate exactly 5 quiz questions. Requirements:
-- Every question must reference something SPECIFIC from the chat memories above
-- Questions must be varied: mix stats-based, quote-based, behaviour-based, emoji-based
-- Do NOT generate generic relationship questions — everything must be verifiable from the memories
-- Wrong options should be plausible but clearly wrong to someone who knows the chats
+Generate 5 quiz questions. Rules:
+- Every question must be based on something SPECIFIC in the memories above — reference the date
+- Mix of types: stats-based, quote-based, behaviour-based, pattern-based
+- Wrong options must be plausible but clearly wrong to someone who was there
+- memory_snippet: copy an actual line from the memory the question is based on
+- explanation: casual, like texting a friend, mention the date
 
-Return ONLY valid JSON, no markdown, no extra text:
+Return ONLY valid JSON:
 {{
   "questions": [
     {{
       "question": "question text",
       "options": ["A", "B", "C", "D"],
       "answer": "exact correct option text",
-      "explanation": "casual explanation referencing the specific moment"
+      "memory_snippet": "actual quoted line from the memory",
+      "explanation": "casual explanation with date reference"
     }}
   ]
 }}"""
@@ -85,10 +83,7 @@ Return ONLY valid JSON, no markdown, no extra text:
     ], temperature=1.1)
 
     try:
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            cleaned = "\n".join(lines[1:-1])
+        cleaned = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(cleaned)
     except json.JSONDecodeError:
         return {"questions": [], "raw": raw, "error": "Could not parse JSON"}

@@ -1,7 +1,6 @@
 """
 Chat mode — MMR retrieval + streaming.
-MMR ensures retrieved chunks are both relevant AND diverse,
-so the bot doesn't just quote the same conversation 5 times.
+Returns SSE stream. Source dates passed separately for UI display.
 """
 
 import json
@@ -14,12 +13,17 @@ from llm import stream_llm
 async def stream_chat(
     message: str, asking_user: str, store: EmbeddingStore
 ) -> AsyncGenerator[str, None]:
-    # MMR: relevant to the question but diverse across time
     chunks  = store.mmr_query(message, n_results=6, fetch_k=30, diversity=0.55)
     context = build_context(chunks)
-    messages = build_messages(message, context, asking_user, tone=TONE_CHAT)
+    msgs    = build_messages(message, context, asking_user, tone=TONE_CHAT)
 
-    async for token in stream_llm(messages):
+    # Send source dates first so frontend can show them
+    sources = [
+        c["start_time"][:10] for c in chunks if c.get("start_time")
+    ]
+    yield f"data: {json.dumps({'sources': sources})}\n\n"
+
+    async for token in stream_llm(msgs, temperature=0.85):
         yield f"data: {json.dumps({'content': token})}\n\n"
 
     yield "data: [DONE]\n\n"

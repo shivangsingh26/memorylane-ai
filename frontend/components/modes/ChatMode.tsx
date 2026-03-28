@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Sparkles } from "lucide-react";
+import { Send, Sparkles, Clock } from "lucide-react";
 import { streamChat } from "@/lib/api";
 import LoadingDots from "@/components/ui/LoadingDots";
 import clsx from "clsx";
@@ -11,66 +11,77 @@ interface Message {
   role: "user" | "bot";
   content: string;
   streaming?: boolean;
-}
-
-interface Props {
-  user: string;
+  sources?: string[];
 }
 
 const STARTERS = [
-  "What do we talk about the most? 🤔",
+  "What do we talk about the most?",
   "Who texts more — me or Krishna?",
   "What's our funniest conversation?",
-  "Tell me something sweet about us 💕",
+  "Tell me something sweet about us",
   "What are our biggest inside jokes?",
 ];
 
-export default function ChatMode({ user }: Props) {
+function formatSourceDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
+export default function ChatMode({ user }: { user: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [input, setInput]       = useState("");
+  const [loading, setLoading]   = useState(false);
+  const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const send = useCallback(
-    async (text: string) => {
-      if (!text.trim() || loading) return;
-      setInput("");
+  const send = useCallback(async (text: string) => {
+    if (!text.trim() || loading) return;
+    setInput("");
 
-      const userMsg: Message = { id: Date.now().toString(), role: "user", content: text };
-      const botId = (Date.now() + 1).toString();
-      const botMsg: Message = { id: botId, role: "bot", content: "", streaming: true };
+    const userMsg: Message = { id: Date.now().toString(), role: "user", content: text };
+    const botId             = (Date.now() + 1).toString();
+    const botMsg: Message   = { id: botId, role: "bot", content: "", streaming: true };
 
-      setMessages((prev) => [...prev, userMsg, botMsg]);
-      setLoading(true);
+    setMessages((prev) => [...prev, userMsg, botMsg]);
+    setLoading(true);
 
-      try {
-        for await (const token of streamChat(text, user)) {
+    try {
+      for await (const token of streamChat(text, user)) {
+        if (typeof token === "object" && "sources" in token) {
           setMessages((prev) =>
-            prev.map((m) => (m.id === botId ? { ...m, content: m.content + token } : m))
+            prev.map((m) => (m.id === botId ? { ...m, sources: token.sources as string[] } : m))
+          );
+        } else {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === botId ? { ...m, content: m.content + token } : m
+            )
           );
         }
-      } catch (e: unknown) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === botId
-              ? { ...m, content: "Something went wrong 😔 Make sure the backend is running.", streaming: false }
-              : m
-          )
-        );
-      } finally {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m))
-        );
-        setLoading(false);
       }
-    },
-    [loading, user]
-  );
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === botId
+            ? { ...m, content: "Something went wrong. Make sure the backend is running.", streaming: false }
+            : m
+        )
+      );
+    } finally {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m))
+      );
+      setLoading(false);
+    }
+  }, [loading, user]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -82,13 +93,12 @@ export default function ChatMode({ user }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-6 animate-fade">
             <div className="text-center">
-              <div className="text-4xl mb-3">✨</div>
               <p className="text-lg font-semibold text-white">Ask me anything about you two</p>
-              <p className="text-sm text-slate-500 mt-1">I remember every conversation</p>
+              <p className="text-sm text-slate-500 mt-1">I remember every conversation, every pattern</p>
             </div>
             <div className="grid grid-cols-1 gap-2 w-full max-w-md">
               {STARTERS.map((s) => (
@@ -113,17 +123,31 @@ export default function ChatMode({ user }: Props) {
                   <Sparkles size={12} className="text-violet-400" />
                 </div>
               )}
-              <div
-                className={clsx(
-                  "max-w-[72%] px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
-                  msg.role === "user" ? "bubble-user text-white" : "bubble-bot text-slate-100",
-                  msg.streaming && !msg.content && "min-w-[60px] min-h-[40px] flex items-center"
-                )}
-              >
-                {msg.role === "bot" && !msg.content && msg.streaming ? (
-                  <LoadingDots />
-                ) : (
-                  <span className={clsx(msg.streaming && "cursor-blink")}>{msg.content}</span>
+
+              <div className="flex flex-col gap-1.5 max-w-[72%]">
+                <div
+                  className={clsx(
+                    "px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
+                    msg.role === "user" ? "bubble-user text-white" : "bubble-bot text-slate-100",
+                    msg.streaming && !msg.content && "min-w-[60px] min-h-[40px] flex items-center"
+                  )}
+                >
+                  {msg.role === "bot" && !msg.content && msg.streaming ? (
+                    <LoadingDots />
+                  ) : (
+                    <span className={clsx(msg.streaming && "cursor-blink")}>{msg.content}</span>
+                  )}
+                </div>
+
+                {/* Source dates — shown below bot messages */}
+                {msg.role === "bot" && msg.sources && msg.sources.length > 0 && !msg.streaming && (
+                  <div className="flex items-center gap-1.5 px-1">
+                    <Clock size={10} className="text-slate-600 shrink-0" />
+                    <span className="text-[10px] text-slate-600">
+                      Based on memories from{" "}
+                      {[...new Set(msg.sources.map(formatSourceDate))].join(", ")}
+                    </span>
+                  </div>
                 )}
               </div>
             </div>
@@ -144,7 +168,6 @@ export default function ChatMode({ user }: Props) {
             rows={1}
             disabled={loading}
             className="flex-1 bg-transparent text-sm text-white placeholder-slate-600 resize-none outline-none max-h-32 leading-relaxed disabled:opacity-50"
-            style={{ minHeight: "24px" }}
           />
           <button
             onClick={() => send(input)}

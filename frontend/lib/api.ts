@@ -71,10 +71,12 @@ export async function uploadChat(file: File): Promise<{ message_count: number; c
 
 // ─── Chat (streaming) ─────────────────────────────────────────────────────────
 
+export type ChatChunk = string | { sources: string[] };
+
 export async function* streamChat(
   message: string,
   user: string
-): AsyncGenerator<string> {
+): AsyncGenerator<ChatChunk> {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -104,7 +106,8 @@ export async function* streamChat(
       if (payload === "[DONE]") return;
       try {
         const parsed = JSON.parse(payload);
-        if (parsed.content) yield parsed.content;
+        if (parsed.sources) yield { sources: parsed.sources as string[] };
+        else if (parsed.content) yield parsed.content as string;
       } catch {
         // skip malformed chunk
       }

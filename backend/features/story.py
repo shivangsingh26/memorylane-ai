@@ -1,6 +1,6 @@
 """
-Story mode — emotionally targeted queries pull the richest material
-(funny, sweet, dramatic moments) rather than random early chunks.
+Story mode — emotionally targeted multi-query + random month samples.
+Output is plain text — rich prose, no JSON.
 """
 
 import random
@@ -11,39 +11,41 @@ from config import settings
 
 STYLE_PROMPTS = {
     "romantic": (
-        "Write a heartfelt short story (300-400 words) about their love story. "
-        "Use specific moments and their actual dynamic — {u1}'s detached-but-not-really energy, "
-        "{u2}'s expressiveness. Make it feel like it's genuinely them, not a template."
+        "Write a heartfelt short story (300-400 words) about them. "
+        "Use their actual dynamic — {u1}'s 2-word replies hiding real feelings, "
+        "{u2}'s expressiveness. Use specific moments from the memories. "
+        "Make it feel unmistakably like them, not a template with names swapped in."
     ),
     "poem": (
-        "Write a poem (12-16 lines) that captures their actual relationship energy — "
-        "the banter, the warmth, the Hinglish, the 🤡 and 😭. Mix English and Hindi naturally. "
-        "Reference real moments and phrases from their chats."
+        "Write a poem (12-16 lines) that captures their actual energy — the banter, "
+        "the warmth, the Hinglish, the specific phrases they use. "
+        "Reference real moments with dates if possible. Mix Hindi and English naturally."
     ),
     "bollywood": (
-        "Write a dramatic Bollywood-style narration about their love story. "
-        "Overdramatic, filmy, use actual dialogue from their chats as movie lines. "
-        "Include a villain (could be slow replies 😂), a climax, a resolution. Be hilarious."
+        "Write a dramatic Bollywood-style narration. Use actual dialogue from the memories "
+        "as movie lines. Create a dramatic arc — conflict, climax, resolution — "
+        "all based on real things from the chats. Be over the top but grounded in what actually happened."
     ),
     "roast_story": (
-        "Write a story called 'How These Two Actually Text' — narrate their relationship "
-        "as if exposing them to the world. Use their real habits, phrases, response patterns. "
-        "Gently savage. Should make them both laugh AND cringe."
+        "Write a story called 'An Honest Account of How These Two Actually Text'. "
+        "Narrate their texting patterns using specific moments and dates from the memories. "
+        "Expose {u1}'s 'acha' responses and {u2}'s 😭 energy with affection. "
+        "Make them both laugh and cringe."
     ),
     "fairy_tale": (
-        "Write a fairy tale beginning with 'Once upon a time...' but set in the real world — "
-        "WhatsApp read receipts, blue ticks, 'noob', '😭😭', 'acha'. Use their actual dynamic. "
-        "Make the mundane magical."
+        "Write a fairy tale starting with 'Once upon a time...' set in the modern world. "
+        "Blue ticks, voice notes, 'noob', Hinglish, late-night texts. "
+        "Use their actual dynamic and real moments from the memories. "
+        "Make the mundane feel magical — because in a way it is."
     ),
 }
 
-# Emotional seed queries per style — target the richest relevant memories
 STYLE_QUERIES = {
-    "romantic":    ["miss you love sweet caring", "late night deep conversation", "first time wholesome moment"],
-    "poem":        ["banter tease funny joke", "sweet emotional moment", "daily life routine together"],
-    "bollywood":   ["dramatic moment fight sorry", "emotional confession feeling", "funny chaos situation"],
-    "roast_story": ["acha noob teasing response", "slow reply ignored message", "clown moment embarrassing"],
-    "fairy_tale":  ["good morning routine daily", "wholesome moment caring", "funny unexpected moment"],
+    "romantic":    ["miss you love sweet caring tender", "late night deep honest conversation", "first wholesome moment together"],
+    "poem":        ["banter tease playful joke daily", "sweet emotional caring moment", "hinglish funny natural conversation"],
+    "bollywood":   ["dramatic emotional moment feeling", "argument sorry reconcile", "funny chaotic situation"],
+    "roast_story": ["acha noob short reply teasing", "acting unbothered while caring", "pattern habit repeated behaviour"],
+    "fairy_tale":  ["good morning routine daily ordinary", "wholesome unexpected sweet", "funny simple moment"],
 }
 
 
@@ -51,28 +53,27 @@ async def generate_story(store: EmbeddingStore, style: str = "romantic") -> str:
     u1, u2 = settings.user1_name, settings.user2_name
 
     queries = STYLE_QUERIES.get(style, STYLE_QUERIES["romantic"])
-    # Semantic search for emotionally relevant chunks
-    semantic_chunks = store.multi_query(queries, n_per_query=3)
-    # Add some random chunks for unexpected authentic detail
-    random_chunks = store.random_sample(n=5)
+    semantic = store.multi_query(queries, n_per_query=3)
+    # Add random month samples for unexpected authentic detail
+    spread   = store.month_spread(per_month=1)
+    all_c    = semantic + spread
+    random.shuffle(all_c)
+    context  = build_context(all_c[:10])
 
-    all_chunks = semantic_chunks + random_chunks
-    random.shuffle(all_chunks)
-    context = build_context(all_chunks[:10])
+    instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["romantic"]).format(u1=u1, u2=u2)
 
-    style_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["romantic"]).format(u1=u1, u2=u2)
-
-    user_content = f"""Real memories from {u1} and {u2}'s WhatsApp chats:
+    user_content = f"""Real memories from {u1} and {u2}'s WhatsApp (with dates):
 
 {context}
 
-{style_instruction}
+{instruction}
 
-Rules:
-- Use SPECIFIC details from the memories above — exact phrases, situations, dynamics
-- Don't just use their names in a generic story — make it feel like IT'S THEM
-- No AI-sounding phrases like "a tapestry of emotions" or "their journey together"
-- Write it and stop. No preamble, no "Here is your story:", just begin."""
+Ground rules:
+- Only use details actually present in the memories above
+- Reference specific dates when you mention events
+- No AI phrases: "tapestry of emotions", "their bond", "journey together", "in conclusion"
+- Start writing immediately — no preamble like "Here is your story:"
+- Make it feel like it was written by someone who actually knows them"""
 
     return await call_llm([
         {"role": "system", "content": SYSTEM_PROMPT + f"\n\n{TONE_STORY}"},

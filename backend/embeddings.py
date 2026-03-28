@@ -2,23 +2,22 @@
 Chroma vector store with OpenAI embeddings (text-embedding-3-small).
 
 Retrieval strategies:
-  query()           — semantic top-k (for chat)
-  mmr_query()       — Maximal Marginal Relevance: relevant + diverse (for chat)
-  temporal_spread() — chunks spread across the full timeline (for timeline/roast)
-  random_sample()   — truly random chunks, different every call (for story/quiz)
-  multi_query()     — several seed queries merged + deduplicated (for quiz)
+  mmr_query()          — Maximal Marginal Relevance (relevant + diverse) — for chat
+  month_spread()       — Sample from every calendar month equally — for timeline/roast/story
+  random_sample()      — Truly random, different every call — for story variety
+  multi_query()        — Multiple semantic queries merged + deduplicated — for quiz
 """
 
 import json
 import math
 import random
 import time
-from typing import Optional
+from collections import defaultdict
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from openai import OpenAI
 from config import settings
-from data_processor import chunk_messages
+from data_processor import chunk_messages  # noqa: F401 used by store_messages
 
 COLLECTION_NAME = "couple_chat"
 
@@ -34,21 +33,23 @@ class EmbeddingStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
+        # Cached month → [ids] index, built lazily
+        self._month_index: dict[str, list[str]] | None = None
 
     # ------------------------------------------------------------------
     # Public retrieval API
     # ------------------------------------------------------------------
 
     def query(self, text: str, n_results: int = None) -> list[dict]:
-        """Standard semantic top-k search."""
+        """Standard semantic top-k."""
         n_results = n_results or settings.rag_top_k
         count = self._collection.count()
         if count == 0:
             return []
         n_results = min(n_results, count)
-        embedding = self._embed_texts([text])[0]
+        emb = self._embed_texts([text])[0]
         results = self._collection.query(
-            query_embeddings=[embedding],
+            query_embeddings=[emb],
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
         )
@@ -58,155 +59,150 @@ class EmbeddingStore:
             results["distances"][0],
         )
 
-    def mmr_query(self, text: str, n_results: int = 6, fetch_k: int = 30, diversity: float = 0.6) -> list[dict]:
+    def mmr_query(
+        self,
+        text: str,
+        n_results: int = 6,
+        fetch_k: int = 30,
+        diversity: float = 0.55,
+    ) -> list[dict]:
         """
-        Maximal Marginal Relevance — balances relevance with diversity.
-        diversity=0.0 → pure relevance, diversity=1.0 → pure diversity.
-        Fetches fetch_k candidates, then greedily picks n_results diverse ones.
+        Maximal Marginal Relevance — relevant AND diverse.
+        diversity=0 → pure relevance, 1 → pure diversity.
         """
         count = self._collection.count()
         if count == 0:
             return []
-
-        fetch_k = min(fetch_k, count)
+        fetch_k  = min(fetch_k, count)
         n_results = min(n_results, fetch_k)
         query_emb = self._embed_texts([text])[0]
 
-        # Fetch a wider candidate pool
         results = self._collection.query(
             query_embeddings=[query_emb],
             n_results=fetch_k,
             include=["documents", "metadatas", "distances", "embeddings"],
         )
-        docs      = results["documents"][0]
-        metas     = results["metadatas"][0]
-        dists     = results["distances"][0]
-        doc_embs  = results["embeddings"][0]  # list of embedding vectors
+        docs     = results["documents"][0]
+        metas    = results["metadatas"][0]
+        dists    = results["distances"][0]
+        doc_embs = results["embeddings"][0]
+        rel      = [1 - d for d in dists]
 
-        # Convert cosine distance to similarity
-        rel_scores = [1 - d for d in dists]
-
-        selected_idx = []
-        remaining    = list(range(len(docs)))
-
+        selected, remaining = [], list(range(len(docs)))
         for _ in range(n_results):
             if not remaining:
                 break
-            if not selected_idx:
-                # First pick: most relevant
-                best = max(remaining, key=lambda i: rel_scores[i])
+            if not selected:
+                best = max(remaining, key=lambda i: rel[i])
             else:
-                # MMR score: relevance - diversity_penalty
-                def mmr_score(i: int) -> float:
-                    rel = rel_scores[i]
+                def _score(i: int) -> float:
                     max_sim = max(
                         self._cosine_sim(doc_embs[i], doc_embs[j])
-                        for j in selected_idx
+                        for j in selected
                     )
-                    return (1 - diversity) * rel - diversity * max_sim
-
-                best = max(remaining, key=mmr_score)
-
-            selected_idx.append(best)
+                    return (1 - diversity) * rel[i] - diversity * max_sim
+                best = max(remaining, key=_score)
+            selected.append(best)
             remaining.remove(best)
 
         return self._format_results(
-            [docs[i] for i in selected_idx],
-            [metas[i] for i in selected_idx],
-            [dists[i] for i in selected_idx],
+            [docs[i] for i in selected],
+            [metas[i] for i in selected],
+            [dists[i] for i in selected],
         )
 
-    def temporal_spread(self, n_periods: int = 5, per_period: int = 3) -> list[dict]:
+    def month_spread(self, per_month: int = 2, max_months: int = 9) -> list[dict]:
         """
-        Divide the full timeline into n_periods equal buckets and randomly
-        sample per_period chunks from each. Guarantees chronological diversity.
+        Sample `per_month` random chunks from EACH calendar month.
+        This is the correct way to get true chronological diversity —
+        it doesn't oversample October just because it has 5x more chunks.
         """
-        count = self._collection.count()
-        if count == 0:
+        index = self._get_month_index()
+        if not index:
             return []
 
-        # Pull all IDs and their offsets in insertion order
-        all_ids = self._collection.get(include=[])["ids"]
-        total = len(all_ids)
-        period_size = max(1, total // n_periods)
+        months = sorted(index.keys())
+        # If more months than max_months, keep earliest + latest + random middle
+        if len(months) > max_months:
+            middle = random.sample(months[1:-1], max_months - 2)
+            months = [months[0]] + sorted(middle) + [months[-1]]
 
         selected_ids = []
-        for p in range(n_periods):
-            start = p * period_size
-            end   = start + period_size if p < n_periods - 1 else total
-            bucket = all_ids[start:end]
-            k = min(per_period, len(bucket))
-            selected_ids.extend(random.sample(bucket, k))
+        for month in months:
+            pool = index[month]
+            k    = min(per_month, len(pool))
+            selected_ids.extend(random.sample(pool, k))
+
+        if not selected_ids:
+            return []
 
         results = self._collection.get(
             ids=selected_ids,
             include=["documents", "metadatas"],
         )
-        chunks = []
-        for doc, meta in zip(results["documents"], results["metadatas"]):
-            chunks.append(self._fmt_chunk(doc, meta))
-
-        # Sort by start_time so narrative order is preserved
+        chunks = [
+            self._fmt_chunk(doc, meta)
+            for doc, meta in zip(results["documents"], results["metadatas"])
+        ]
+        # Sort chronologically so narrative makes sense
         chunks.sort(key=lambda c: c["start_time"])
         return chunks
 
     def random_sample(self, n: int = 15) -> list[dict]:
         """
-        Truly random sample — uses a random offset so it's different every call.
-        Solves the 'always same early chunks' problem with Chroma's get().
+        Truly random sample — random month first, then random chunks within it.
+        Different every call regardless of collection size.
         """
-        count = self._collection.count()
-        if count == 0:
+        index = self._get_month_index()
+        if not index:
             return []
-        n = min(n, count)
 
-        # Random offset into the collection
-        offset = random.randint(0, max(0, count - n * 3))
-        fetch  = min(n * 3, count - offset)
+        all_ids: list[str] = []
+        months = list(index.keys())
+        random.shuffle(months)
+        for month in months:
+            pool = index[month]
+            k    = min(max(1, n // len(months)), len(pool))
+            all_ids.extend(random.sample(pool, k))
+            if len(all_ids) >= n * 2:
+                break
 
-        results = self._collection.get(
-            limit=fetch,
-            offset=offset,
+        selected = random.sample(all_ids, min(n, len(all_ids)))
+        results  = self._collection.get(
+            ids=selected,
             include=["documents", "metadatas"],
         )
-        docs  = results["documents"]
-        metas = results["metadatas"]
-
-        # Randomly pick n from the fetched pool
-        indices = random.sample(range(len(docs)), min(n, len(docs)))
-        return [self._fmt_chunk(docs[i], metas[i]) for i in indices]
+        return [
+            self._fmt_chunk(doc, meta)
+            for doc, meta in zip(results["documents"], results["metadatas"])
+        ]
 
     def multi_query(self, queries: list[str], n_per_query: int = 4) -> list[dict]:
         """
-        Run multiple semantic queries and merge results, deduplicating by text.
-        Used by quiz mode to get diverse question material.
+        Run multiple semantic queries, merge + deduplicate by text prefix.
         """
-        seen_texts: set[str] = set()
-        all_chunks: list[dict] = []
-
+        seen: set[str] = set()
+        out:  list[dict] = []
         for q in queries:
-            chunks = self.query(q, n_results=n_per_query)
-            for c in chunks:
-                key = c["text"][:80]
-                if key not in seen_texts:
-                    seen_texts.add(key)
-                    all_chunks.append(c)
-
-        # Shuffle so order doesn't bias the LLM
-        random.shuffle(all_chunks)
-        return all_chunks
+            for c in self.query(q, n_results=n_per_query):
+                key = c["text"][:60]
+                if key not in seen:
+                    seen.add(key)
+                    out.append(c)
+        random.shuffle(out)
+        return out
 
     def store_messages(self, messages: list[dict]) -> int:
-        """Chunk messages, embed, and upsert into Chroma. Returns chunk count."""
         chunks = chunk_messages(messages, settings.chunk_size)
         if not chunks:
             return 0
+        self._month_index = None  # Invalidate cache
 
         batch_size = 50
         for i in range(0, len(chunks), batch_size):
-            batch    = chunks[i : i + batch_size]
-            texts    = [c["text"] for c in batch]
-            ids      = [c["id"] for c in batch]
+            batch     = chunks[i : i + batch_size]
+            texts     = [c["text"] for c in batch]
+            ids       = [c["id"] for c in batch]
             metadatas = [
                 {
                     "start_time":    c["start_time"] or "",
@@ -216,11 +212,10 @@ class EmbeddingStore:
                 }
                 for c in batch
             ]
-            embeddings = self._embed_texts(texts)
             self._collection.upsert(
                 ids=ids,
                 documents=texts,
-                embeddings=embeddings,
+                embeddings=self._embed_texts(texts),
                 metadatas=metadatas,
             )
             if i + batch_size < len(chunks):
@@ -232,6 +227,7 @@ class EmbeddingStore:
         return self._collection.count() == 0
 
     def clear(self) -> None:
+        self._month_index = None
         self._client.delete_collection(COLLECTION_NAME)
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
@@ -239,7 +235,35 @@ class EmbeddingStore:
         )
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Month index (cached)
+    # ------------------------------------------------------------------
+
+    def _get_month_index(self) -> dict[str, list[str]]:
+        """Build and cache a month → [chunk_ids] mapping."""
+        if self._month_index is not None:
+            return self._month_index
+
+        count = self._collection.count()
+        if count == 0:
+            self._month_index = {}
+            return {}
+
+        # Fetch all IDs + metadatas in one call
+        all_data = self._collection.get(
+            limit=count,
+            include=["metadatas"],
+        )
+        index: dict[str, list[str]] = defaultdict(list)
+        for cid, meta in zip(all_data["ids"], all_data["metadatas"]):
+            month = meta.get("start_time", "")[:7]  # "YYYY-MM"
+            if month:
+                index[month].append(cid)
+
+        self._month_index = dict(index)
+        return self._month_index
+
+    # ------------------------------------------------------------------
+    # Helpers
     # ------------------------------------------------------------------
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -266,14 +290,11 @@ class EmbeddingStore:
 
     def _format_results(
         self,
-        docs:   list[str],
-        metas:  list[dict],
-        dists:  list[float],
+        docs:  list[str],
+        metas: list[dict],
+        dists: list[float],
     ) -> list[dict]:
         return [
-            {
-                **self._fmt_chunk(doc, meta),
-                "similarity": round(1 - dist, 4),
-            }
-            for doc, meta, dist in zip(docs, metas, dists)
+            {**self._fmt_chunk(doc, meta), "similarity": round(1 - d, 4)}
+            for doc, meta, d in zip(docs, metas, dists)
         ]

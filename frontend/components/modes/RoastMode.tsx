@@ -7,25 +7,38 @@ import GlassCard from "@/components/ui/GlassCard";
 import LoadingDots from "@/components/ui/LoadingDots";
 import clsx from "clsx";
 
+interface RoastData {
+  sections: { label: string; text: string }[];
+  verdict: string;
+  save: string;
+}
+
 const TARGETS = [
-  { id: "Shivang", label: "Roast Shivang 🤡", sub: "The unbothered clown" },
-  { id: "Krishna", label: "Roast Krishna 😭", sub: "The expressive one" },
-  { id: "both",    label: "Roast Both 💥",    sub: "Fair and savage" },
+  { id: "Shivang", label: "Shivang",  sub: "The unbothered one" },
+  { id: "Krishna", label: "Krishna",  sub: "The expressive one" },
+  { id: "both",    label: "Both",     sub: "Fair and even" },
 ];
 
+const SECTION_ACCENTS: Record<string, string> = {
+  "The Numbers":  "text-cyan-400 border-cyan-500/20",
+  "Caught In 4K": "text-orange-400 border-orange-500/20",
+  "The Habit":    "text-pink-400 border-pink-500/20",
+  "The Roast":    "text-violet-400 border-violet-500/20",
+};
+
 export default function RoastMode() {
-  const [target, setTarget] = useState("both");
-  const [roast, setRoast] = useState("");
+  const [target, setTarget]   = useState("both");
+  const [roast, setRoast]     = useState<RoastData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError]     = useState("");
 
   const generate = async () => {
     setLoading(true);
-    setRoast("");
+    setRoast(null);
     setError("");
     try {
-      const text = await fetchRoast(target);
-      setRoast(text);
+      const data = await fetchRoast(target) as unknown as RoastData;
+      setRoast(data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to generate roast");
     } finally {
@@ -35,23 +48,20 @@ export default function RoastMode() {
 
   return (
     <div className="flex flex-col items-center h-full px-6 py-8 gap-6 overflow-y-auto">
-      {/* Heading */}
+      {/* Header */}
       <div className="text-center animate-fade-up">
-        <div className="text-5xl mb-3">🔥</div>
-        <h2 className="text-2xl font-bold text-white">Roast Mode</h2>
-        <p className="text-sm text-slate-500 mt-1.5 max-w-sm">
-          Based on actual stats from your chat — friendly fire only 😏
-        </p>
+        <h2 className="text-xl font-bold text-white">Roast Mode</h2>
+        <p className="text-sm text-slate-500 mt-1">Based on 9 months of actual data. No mercy.</p>
       </div>
 
       {/* Target selector */}
-      <div className="grid grid-cols-3 gap-3 w-full max-w-lg animate-fade-up" style={{ animationDelay: "0.1s" }}>
+      <div className="flex gap-2 animate-fade-up" style={{ animationDelay: "0.05s" }}>
         {TARGETS.map(({ id, label, sub }) => (
           <button
             key={id}
             onClick={() => setTarget(id)}
             className={clsx(
-              "glass rounded-2xl px-4 py-3.5 text-center transition-all",
+              "glass rounded-xl px-5 py-3 text-center transition-all",
               target === id
                 ? "glow-border bg-violet-500/10 text-white"
                 : "glass-hover text-slate-400 hover:text-white"
@@ -67,42 +77,59 @@ export default function RoastMode() {
       <button
         onClick={generate}
         disabled={loading}
-        className="btn-gradient flex items-center gap-2 px-8 py-3 rounded-2xl text-white font-semibold text-sm"
+        className="btn-gradient flex items-center gap-2 px-7 py-2.5 rounded-xl text-white font-semibold text-sm"
       >
-        {loading ? (
-          <><RefreshCw size={15} className="animate-spin" /> Generating…</>
-        ) : (
-          <><Flame size={15} /> Generate Roast</>
-        )}
+        {loading ? <><RefreshCw size={14} className="animate-spin" /> Generating…</> : <><Flame size={14} /> Generate Roast</>}
       </button>
 
-      {/* Loading */}
       {loading && (
-        <GlassCard className="w-full max-w-2xl p-8 flex flex-col items-center gap-3">
+        <GlassCard className="w-full max-w-xl p-8 flex flex-col items-center gap-3">
           <LoadingDots />
-          <p className="text-xs text-slate-500">Reading 85k messages for ammo…</p>
+          <p className="text-xs text-slate-500">Reading 9 months of receipts…</p>
         </GlassCard>
       )}
 
-      {/* Roast result */}
+      {error && <p className="text-red-400 text-sm">{error}</p>}
+
+      {/* Structured roast output */}
       {roast && !loading && (
-        <GlassCard glow className="w-full max-w-2xl p-8 animate-fade-up">
-          <div className="flex items-center gap-2 mb-4">
-            <Flame size={16} className="text-orange-400" />
-            <span className="text-xs font-semibold text-orange-400 uppercase tracking-widest">The Roast</span>
-          </div>
-          <p className="text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">{roast}</p>
+        <div className="w-full max-w-xl space-y-3 animate-fade-up">
+          {/* Sections */}
+          {roast.sections.map((section, i) => {
+            const accent = SECTION_ACCENTS[section.label] ?? "text-violet-400 border-violet-500/20";
+            const [colorClass] = accent.split(" ");
+            return (
+              <GlassCard key={i} className="p-5">
+                <p className={clsx("text-[11px] font-semibold uppercase tracking-widest mb-3", colorClass)}>
+                  {section.label}
+                </p>
+                <p className="text-sm text-slate-200 leading-relaxed">{section.text}</p>
+              </GlassCard>
+            );
+          })}
+
+          {/* Verdict */}
+          {roast.verdict && (
+            <div className="glass rounded-xl px-5 py-4 border-orange-500/20">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-orange-400 mb-2">Verdict</p>
+              <p className="text-white font-semibold text-sm italic">"{roast.verdict}"</p>
+            </div>
+          )}
+
+          {/* Warm close */}
+          {roast.save && (
+            <div className="px-5 py-3">
+              <p className="text-sm text-slate-400 leading-relaxed">{roast.save}</p>
+            </div>
+          )}
+
           <button
             onClick={generate}
-            className="mt-5 flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-400 transition-colors mx-auto pt-1"
           >
-            <RefreshCw size={12} /> Generate another
+            <RefreshCw size={11} /> Generate another
           </button>
-        </GlassCard>
-      )}
-
-      {error && (
-        <div className="text-red-400 text-sm bg-red-500/10 rounded-xl px-4 py-3">{error}</div>
+        </div>
       )}
     </div>
   );
